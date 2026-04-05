@@ -1,0 +1,14 @@
+{
+  "name": "amos-player-local-server",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@netlify/blobs": "^10.7.4",
+    "@vercel/blob": "^2.3.3",
+    "pg": "^8.16.3"
+  },
+  "scripts": {
+    "build": "node build-netlify.mjs",
+    "start": "node server.js"
+  }
+}
