@@ -568,6 +568,9 @@
         }
 
         body.embed-guard-active iframe:not(#embedFrame),
+        body.embed-guard-active object,
+        body.embed-guard-active embed,
+        body.embed-guard-active portal,
         iframe[scrolling="no"]:not(#embedFrame) {
             display: none !important;
             width: 0 !important;
@@ -2605,10 +2608,43 @@
             return false;
         }
 
-        function removeInjectedFrame(frame) {
-            if (!frame || frame === els.embedFrame) return;
-            pruneOverlayContainer(frame);
-            frame.remove();
+        function isAppSurface(element) {
+            return Boolean(element?.closest?.(".site-header, .playlist-panel, .admin-panel, .auth-modal, .settings-modal, .session-warning, .account-menu"));
+        }
+
+        function rectsOverlap(first, second) {
+            return first.left < second.right && first.right > second.left && first.top < second.bottom && first.bottom > second.top;
+        }
+
+        function isSuspiciousRedirectElement(element) {
+            if (!element || element === els.embedFrame || isAppSurface(element)) return false;
+
+            const redirectTarget = element.closest?.("a[href], area[href], form[action], [onclick]");
+            if (!redirectTarget || isAppSurface(redirectTarget)) return false;
+
+            if (redirectTarget.closest?.("#playerSection, #videoShell")) return true;
+
+            const rect = redirectTarget.getBoundingClientRect?.();
+            const playerRect = els.playerSection.getBoundingClientRect();
+            if (!rect || !rect.width || !rect.height || !rectsOverlap(rect, playerRect)) return false;
+
+            const style = window.getComputedStyle(redirectTarget);
+            const zIndex = Number.parseInt(style.zIndex, 10);
+            return ["absolute", "fixed", "sticky"].includes(style.position) || zIndex > 20;
+        }
+
+        function isInjectedMediaElement(element) {
+            return Boolean(
+                element &&
+                element !== els.embedFrame &&
+                element.matches?.("iframe, object, embed, portal")
+            );
+        }
+
+        function removeInjectedElement(element) {
+            if (!element || element === els.embedFrame) return;
+            pruneOverlayContainer(element);
+            element.remove();
         }
 
         function pruneOverlayContainer(element) {
@@ -2623,7 +2659,7 @@
                 );
                 const hasElementChildren = Array.from(current.children);
                 const onlyDisposableChildren = hasElementChildren.every((child) =>
-                    child.matches?.("iframe, script, style") || child.childElementCount === 0
+                    child.matches?.("iframe, object, embed, portal, script, style, a, form") || child.childElementCount === 0
                 );
 
                 if (hasText || !onlyDisposableChildren) {
@@ -2636,25 +2672,50 @@
             }
         }
 
+        function collectInjectedMediaElements(root, results = []) {
+            if (!root?.querySelectorAll) return results;
+            root.querySelectorAll("iframe, object, embed, portal").forEach((element) => {
+                if (isInjectedMediaElement(element) || isInjectedOverlayFrame(element)) {
+                    results.push(element);
+                }
+            });
+            root.querySelectorAll("*").forEach((element) => {
+                if (element.shadowRoot) {
+                    collectInjectedMediaElements(element.shadowRoot, results);
+                }
+            });
+            return results;
+        }
+
         function purgeUnexpectedEmbeds() {
             if (!els.videoShell.classList.contains("is-embed")) return;
 
-            const strayFrames = Array.from(document.documentElement.querySelectorAll("iframe"))
-                .filter((frame) => frame !== els.embedFrame && isInjectedOverlayFrame(frame));
+            const injectedMedia = collectInjectedMediaElements(document.documentElement);
+            const redirectOverlays = Array.from(document.documentElement.querySelectorAll("a[href], area[href], form[action], [onclick]"))
+                .filter(isSuspiciousRedirectElement);
 
-            strayFrames.forEach(removeInjectedFrame);
+            injectedMedia.forEach(removeInjectedElement);
+            redirectOverlays.forEach(removeInjectedElement);
         }
 
         function blockEmbedDocumentNavigation(event) {
             if (!els.videoShell.classList.contains("is-embed")) return;
-            const target = event.target?.closest?.("a[href], area[href], form[action]");
-            if (!target || target.closest?.(".library-panel, .topbar, .admin-panel, .auth-modal, .settings-modal")) {
+            const target = event.target instanceof Element ? event.target : null;
+            if (!target || target === els.embedFrame || isAppSurface(target)) {
                 return;
             }
 
-            event.preventDefault();
-            event.stopPropagation();
-            purgeUnexpectedEmbeds();
+            const shouldBlock = Boolean(
+                target.closest?.("#playerSection, #videoShell") ||
+                target.closest?.("iframe, object, embed, portal") ||
+                isSuspiciousRedirectElement(target)
+            );
+
+            if (shouldBlock) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                purgeUnexpectedEmbeds();
+            }
         }
 
         function startEmbedGuard() {
@@ -2673,20 +2734,23 @@
                 };
             }
 
-            document.addEventListener("click", blockEmbedDocumentNavigation, true);
-            document.addEventListener("auxclick", blockEmbedDocumentNavigation, true);
-            document.addEventListener("submit", blockEmbedDocumentNavigation, true);
+            ["pointerdown", "mousedown", "touchstart", "click", "auxclick", "submit"].forEach((eventName) => {
+                document.addEventListener(eventName, blockEmbedDocumentNavigation, true);
+            });
 
             state.embedGuardObserver = new MutationObserver((mutations) => {
                 for (const mutation of mutations) {
                     mutation.addedNodes.forEach((node) => {
                         if (node.nodeType !== Node.ELEMENT_NODE) return;
-                        if (node.matches?.("iframe") && node !== els.embedFrame) {
-                            removeInjectedFrame(node);
+                        if (isInjectedMediaElement(node) || isSuspiciousRedirectElement(node)) {
+                            removeInjectedElement(node);
                             return;
                         }
-                        node.querySelectorAll?.("iframe").forEach((frame) => {
-                            if (frame !== els.embedFrame) removeInjectedFrame(frame);
+                        node.querySelectorAll?.("iframe, object, embed, portal").forEach((element) => {
+                            if (isInjectedMediaElement(element) || isInjectedOverlayFrame(element)) removeInjectedElement(element);
+                        });
+                        node.querySelectorAll?.("a[href], area[href], form[action], [onclick]").forEach((element) => {
+                            if (isSuspiciousRedirectElement(element)) removeInjectedElement(element);
                         });
                     });
                 }
@@ -2718,9 +2782,9 @@
                 window.open = state.originalWindowOpen;
                 state.originalWindowOpen = null;
             }
-            document.removeEventListener("click", blockEmbedDocumentNavigation, true);
-            document.removeEventListener("auxclick", blockEmbedDocumentNavigation, true);
-            document.removeEventListener("submit", blockEmbedDocumentNavigation, true);
+            ["pointerdown", "mousedown", "touchstart", "click", "auxclick", "submit"].forEach((eventName) => {
+                document.removeEventListener(eventName, blockEmbedDocumentNavigation, true);
+            });
         }
 
         function setPlayerMode(mode) {
