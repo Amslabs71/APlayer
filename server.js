@@ -339,7 +339,6 @@ function getSecurityHeaders() {
             "media-src 'self' https: http: data: blob:",
             "connect-src 'self' https: http:",
             "frame-src https: http:",
-            "object-src 'none'",
             "worker-src 'self' blob:",
             "form-action 'self'",
             "base-uri 'self'",
