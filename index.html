@@ -574,6 +574,7 @@
         body.embed-guard-active .embed-ad-kill,
         body.embed-guard-active div:has(> iframe[scrolling="no"]),
         body.embed-guard-active [style*="z-index: 2147483647"][style*="width: 360px"],
+        body.embed-guard-active :is(.ad, .ads, .advertisement, .ad-banner, .ad-container, .adsbox, [id^="ad-"], [id$="-ad"], [class~="ad"], [class~="ads"]),
         iframe[scrolling="no"]:not(#embedFrame) {
             display: none !important;
             width: 0 !important;
@@ -1744,7 +1745,7 @@
                 <article class="player-panel" id="playerSection">
                     <div class="video-shell" id="videoShell">
                         <video id="video" playsinline webkit-playsinline="true" preload="auto"></video>
-                        <iframe id="embedFrame" class="embed-frame" hidden allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen referrerpolicy="no-referrer"></iframe>
+                        <iframe id="embedFrame" class="embed-frame" hidden loading="lazy" allow="autoplay; fullscreen; picture-in-picture; encrypted-media" allowfullscreen referrerpolicy="no-referrer"></iframe>
                         <div class="player-overlay" id="playerOverlay">
                             <div class="player-chip" id="overlayTitle">Ready for the next stream</div>
                             <div class="player-controls">
@@ -2724,6 +2725,29 @@
             }
         }
 
+        function isCommonAdElement(element) {
+            if (!element?.matches || isAppSurface(element)) return false;
+            const selectors = [
+                ".ad",
+                ".ads",
+                ".advertisement",
+                ".ad-banner",
+                ".ad-container",
+                ".adsbox",
+                "[id^='ad-']",
+                "[id$='-ad']",
+                "[class~='ad']",
+                "[class~='ads']"
+            ];
+            return selectors.some((selector) => {
+                try {
+                    return element.matches(selector);
+                } catch {
+                    return false;
+                }
+            });
+        }
+
         function isKnownAdStackContainer(element) {
             if (!element || element === els.videoShell || element === els.playerSection || isAppSurface(element)) return false;
             if (!element.querySelector?.("iframe[scrolling='no'], iframe[scrolling=\"no\"]")) return false;
@@ -2824,7 +2848,7 @@
         function collectInjectedMediaElements(root, results = []) {
             if (!root?.querySelectorAll) return results;
             root.querySelectorAll("*").forEach((element) => {
-                if (isKnownAdStackContainer(element) || isSuspiciousRedirectElement(element) || hasBlockedAdUrl(element)) {
+                if (isKnownAdStackContainer(element) || isSuspiciousRedirectElement(element) || hasBlockedAdUrl(element) || isCommonAdElement(element)) {
                     results.push(element);
                 }
             });
