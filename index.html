@@ -571,6 +571,9 @@
         body.embed-guard-active object,
         body.embed-guard-active embed,
         body.embed-guard-active portal,
+        body.embed-guard-active .embed-ad-kill,
+        body.embed-guard-active div:has(> iframe[scrolling="no"]),
+        body.embed-guard-active [style*="z-index: 2147483647"][style*="width: 360px"],
         iframe[scrolling="no"]:not(#embedFrame) {
             display: none !important;
             width: 0 !important;
@@ -2589,7 +2592,6 @@
 
         function isInjectedOverlayFrame(frame) {
             if (!frame || frame === els.embedFrame) return false;
-            if (els.videoShell.classList.contains("is-embed")) return true;
 
             const src = (frame.getAttribute("src") || "").trim().toLowerCase();
             const scrolling = (frame.getAttribute("scrolling") || "").trim().toLowerCase();
@@ -2597,6 +2599,23 @@
             const height = frame.style.height?.trim().toLowerCase();
             const display = frame.style.display?.trim().toLowerCase();
             const position = frame.style.position?.trim().toLowerCase();
+            const transitionProperty = frame.style.transitionProperty?.trim().toLowerCase();
+            const borderRadius = frame.style.borderRadius?.trim().toLowerCase();
+            const boxShadow = frame.style.boxShadow?.trim().toLowerCase();
+
+            if (els.videoShell.classList.contains("is-embed")) return true;
+
+            const matchesKnownAdFrame = (
+                scrolling === "no" &&
+                height === "250px" &&
+                width === "100%" &&
+                display.includes("block") &&
+                position.includes("relative") &&
+                transitionProperty.includes("right") &&
+                borderRadius === "10px" &&
+                Boolean(boxShadow)
+            );
+            if (matchesKnownAdFrame) return true;
 
             if (scrolling === "no") return true;
             if (!src || src === "about:blank") {
@@ -2606,6 +2625,36 @@
             }
 
             return false;
+        }
+
+        function isKnownAdStackContainer(element) {
+            if (!element || element === els.videoShell || element === els.playerSection || isAppSurface(element)) return false;
+            if (!element.querySelector?.("iframe[scrolling='no'], iframe[scrolling=\"no\"]")) return false;
+
+            const style = window.getComputedStyle(element);
+            const inlineStyle = element.getAttribute("style") || "";
+            const width = Number.parseFloat(style.width);
+            const minWidth = Number.parseFloat(style.minWidth);
+            const maxWidth = Number.parseFloat(style.maxWidth);
+            const zIndex = Number.parseInt(style.zIndex, 10);
+            const fixedRightRail = (
+                style.position === "fixed" &&
+                style.right === "0px" &&
+                style.top === "0px" &&
+                width >= 320 &&
+                width <= 420 &&
+                minWidth >= 320 &&
+                maxWidth <= 440 &&
+                zIndex >= 2147483000
+            );
+            const knownInlineSignature = (
+                inlineStyle.includes("z-index: 2147483647") &&
+                inlineStyle.includes("flex-direction: column") &&
+                inlineStyle.includes("align-items: flex-end") &&
+                inlineStyle.includes("width: 360px")
+            );
+
+            return fixedRightRail || knownInlineSignature;
         }
 
         function isAppSurface(element) {
@@ -2643,6 +2692,7 @@
 
         function removeInjectedElement(element) {
             if (!element || element === els.embedFrame) return;
+            element.classList?.add("embed-ad-kill");
             pruneOverlayContainer(element);
             element.remove();
         }
@@ -2674,6 +2724,11 @@
 
         function collectInjectedMediaElements(root, results = []) {
             if (!root?.querySelectorAll) return results;
+            root.querySelectorAll("*").forEach((element) => {
+                if (isKnownAdStackContainer(element) || isSuspiciousRedirectElement(element)) {
+                    results.push(element);
+                }
+            });
             root.querySelectorAll("iframe, object, embed, portal").forEach((element) => {
                 if (isInjectedMediaElement(element) || isInjectedOverlayFrame(element)) {
                     results.push(element);
@@ -2694,8 +2749,7 @@
             const redirectOverlays = Array.from(document.documentElement.querySelectorAll("a[href], area[href], form[action], [onclick]"))
                 .filter(isSuspiciousRedirectElement);
 
-            injectedMedia.forEach(removeInjectedElement);
-            redirectOverlays.forEach(removeInjectedElement);
+            [...new Set([...injectedMedia, ...redirectOverlays])].forEach(removeInjectedElement);
         }
 
         function blockEmbedDocumentNavigation(event) {
