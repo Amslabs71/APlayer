@@ -3,12 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "@netlify/blobs": "^10.7.4",
-    "@vercel/blob": "^2.3.3",
+    "@ghostery/adblocker": "^2.14.1",
+    "esbuild": "^0.28.0",
     "pg": "^8.16.3"
   },
   "scripts": {
-    "build": "node build-netlify.mjs",
+    "build:adblock": "node build-sw.mjs",
+    "build": "npm run build:adblock",
     "start": "node server.js"
   }
 }

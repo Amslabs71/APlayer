@@ -5,7 +5,7 @@ services:
     plan: free
     region: frankfurt
     autoDeployTrigger: commit
-    buildCommand: npm install
+    buildCommand: npm install && npm run build
     startCommand: npm start
     healthCheckPath: /healthz
     envVars:

@@ -2014,6 +2014,47 @@
         };
         const DEFAULT_PROGRESS_START = "#050505";
         const DEFAULT_PROGRESS_END = "#2d7dff";
+        const BLOCKED_AD_HOSTS = [
+            "acquiredeceasedundress.com",
+            "pncloudfl.com",
+            "doubleclick.net",
+            "googlesyndication.com",
+            "googleadservices.com",
+            "adservice.google.com",
+            "adnxs.com",
+            "adsystem.com",
+            "popads.net",
+            "popcash.net",
+            "propellerads.com",
+            "propeller-tracking.com",
+            "onclickads.net",
+            "trafficjunky.net",
+            "exoclick.com",
+            "juicyads.com",
+            "adsterra.com",
+            "adsterratools.com",
+            "hilltopads.net",
+            "richads.com",
+            "realsrv.com",
+            "ad-maven.com",
+            "pushadmetraffic.com",
+            "pushwelcome.com",
+            "ad-delivery.net",
+            "adkernel.com",
+            "mgid.com",
+            "taboola.com",
+            "outbrain.com"
+        ];
+        const BLOCKED_AD_PARTS = [
+            "/ads/",
+            "/adserver",
+            "/popunder",
+            "/popup",
+            "/vast?",
+            "/vpaid",
+            "chicken.gif",
+            "z=2060453"
+        ];
         const TITLE_COLLATOR = new Intl.Collator(undefined, {
             numeric: true,
             sensitivity: "base"
@@ -2160,7 +2201,15 @@
             adminSeriesList: document.getElementById("adminSeriesList")
         };
 
+        registerBuiltInAdBlocker();
         initialize().catch(handleInitializationError);
+
+        function registerBuiltInAdBlocker() {
+            if (!("serviceWorker" in navigator) || window.location.protocol === "file:") return;
+            navigator.serviceWorker.register("/sw.js").catch((error) => {
+                console.warn("Built-in adblocker could not be registered.", error);
+            });
+        }
 
         async function initialize() {
             const bootstrap = await ensureServerBootstrap();
@@ -2592,6 +2641,7 @@
 
         function isInjectedOverlayFrame(frame) {
             if (!frame || frame === els.embedFrame) return false;
+            if (hasBlockedAdUrl(frame)) return true;
 
             const src = (frame.getAttribute("src") || "").trim().toLowerCase();
             const scrolling = (frame.getAttribute("scrolling") || "").trim().toLowerCase();
@@ -2625,6 +2675,53 @@
             }
 
             return false;
+        }
+
+        function hostMatches(hostname, blockedHost) {
+            return hostname === blockedHost || hostname.endsWith(`.${blockedHost}`);
+        }
+
+        function isBlockedAdUrl(value) {
+            if (!value) return false;
+            try {
+                const url = new URL(value, window.location.href);
+                const hostname = url.hostname.toLowerCase();
+                const href = url.href.toLowerCase();
+                return BLOCKED_AD_HOSTS.some((blockedHost) => hostMatches(hostname, blockedHost)) ||
+                    BLOCKED_AD_PARTS.some((part) => href.includes(part));
+            } catch {
+                const lowered = String(value).toLowerCase();
+                return BLOCKED_AD_HOSTS.some((blockedHost) => lowered.includes(blockedHost)) ||
+                    BLOCKED_AD_PARTS.some((part) => lowered.includes(part));
+            }
+        }
+
+        function hasBlockedAdUrl(element) {
+            if (!element?.getAttribute) return false;
+            const values = [
+                element.getAttribute("src"),
+                element.getAttribute("href"),
+                element.getAttribute("action"),
+                element.getAttribute("data-src"),
+                element.getAttribute("style")
+            ];
+            return values.some(isBlockedAdUrl);
+        }
+
+        function frameContainsBlockedAdDocument(frame) {
+            if (!frame || frame === els.embedFrame) return false;
+            try {
+                const doc = frame.contentDocument;
+                if (!doc) return false;
+                const text = `${doc.documentElement?.outerHTML || ""} ${doc.body?.textContent || ""}`.toLowerCase();
+                return text.includes("are you 18+") ||
+                    text.includes("confitm!") ||
+                    text.includes("acquiredeceasedundress.com") ||
+                    text.includes("pncloudfl.com") ||
+                    text.includes("chicken.gif");
+            } catch {
+                return false;
+            }
         }
 
         function isKnownAdStackContainer(element) {
@@ -2667,9 +2764,11 @@
 
         function isSuspiciousRedirectElement(element) {
             if (!element || element === els.embedFrame || isAppSurface(element)) return false;
+            if (hasBlockedAdUrl(element)) return true;
 
             const redirectTarget = element.closest?.("a[href], area[href], form[action], [onclick]");
             if (!redirectTarget || isAppSurface(redirectTarget)) return false;
+            if (hasBlockedAdUrl(redirectTarget)) return true;
 
             if (redirectTarget.closest?.("#playerSection, #videoShell")) return true;
 
@@ -2725,12 +2824,12 @@
         function collectInjectedMediaElements(root, results = []) {
             if (!root?.querySelectorAll) return results;
             root.querySelectorAll("*").forEach((element) => {
-                if (isKnownAdStackContainer(element) || isSuspiciousRedirectElement(element)) {
+                if (isKnownAdStackContainer(element) || isSuspiciousRedirectElement(element) || hasBlockedAdUrl(element)) {
                     results.push(element);
                 }
             });
             root.querySelectorAll("iframe, object, embed, portal").forEach((element) => {
-                if (isInjectedMediaElement(element) || isInjectedOverlayFrame(element)) {
+                if (isInjectedMediaElement(element) || isInjectedOverlayFrame(element) || frameContainsBlockedAdDocument(element)) {
                     results.push(element);
                 }
             });

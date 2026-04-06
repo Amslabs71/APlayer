@@ -8,6 +8,7 @@ const { Pool } = require("pg");
 const PORT = Number(process.env.PORT) || 3000;
 const ROOT = __dirname;
 const INDEX_FILE = path.join(ROOT, "index.html");
+const SERVICE_WORKER_FILE = path.join(ROOT, "sw.js");
 const DATA_DIR = path.join(ROOT, "data");
 const STORE_FILE = path.join(DATA_DIR, "store.json");
 const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
@@ -327,6 +328,26 @@ function setText(res, statusCode, message) {
     res.end(message);
 }
 
+function getSecurityHeaders() {
+    return {
+        "Content-Security-Policy": [
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+            "font-src 'self' https://fonts.gstatic.com",
+            "img-src 'self' https: http: data: blob:",
+            "media-src 'self' https: http: data: blob:",
+            "connect-src 'self' https: http:",
+            "frame-src https: http:",
+            "worker-src 'self' blob:",
+            "form-action 'self'",
+            "base-uri 'self'",
+            "navigate-to 'self'"
+        ].join("; "),
+        "Referrer-Policy": "no-referrer"
+    };
+}
+
 function applyApiCors(res, req) {
     const origin = req.headers.origin;
     res.setHeader("Access-Control-Allow-Origin", origin === "null" ? "null" : origin || "*");
@@ -641,10 +662,22 @@ async function handleProgressDelete(req, res, session, itemId) {
 async function serveIndex(res) {
     const html = await fsp.readFile(INDEX_FILE, "utf8");
     res.writeHead(200, {
+        ...getSecurityHeaders(),
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-store"
     });
     res.end(html);
+}
+
+async function serveServiceWorker(res) {
+    const script = await fsp.readFile(SERVICE_WORKER_FILE, "utf8");
+    res.writeHead(200, {
+        ...getSecurityHeaders(),
+        "Content-Type": "application/javascript; charset=utf-8",
+        "Cache-Control": "no-store",
+        "Service-Worker-Allowed": "/"
+    });
+    res.end(script);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -665,6 +698,11 @@ const server = http.createServer(async (req, res) => {
     try {
         if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
             await serveIndex(res);
+            return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/sw.js") {
+            await serveServiceWorker(res);
             return;
         }
 
