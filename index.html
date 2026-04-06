@@ -567,6 +567,7 @@
             display: none !important;
         }
 
+        body.embed-guard-active iframe:not(#embedFrame),
         iframe[scrolling="no"]:not(#embedFrame) {
             display: none !important;
             width: 0 !important;
@@ -574,9 +575,13 @@
             min-width: 0 !important;
             min-height: 0 !important;
             opacity: 0 !important;
+            visibility: hidden !important;
             pointer-events: none !important;
             border: 0 !important;
             box-shadow: none !important;
+            position: fixed !important;
+            inset: auto !important;
+            transform: translate(-200vw, -200vh) !important;
         }
 
         .player-overlay {
@@ -2054,6 +2059,7 @@
             networkRecoveryCount: 0,
             embedGuardObserver: null,
             embedGuardInterval: null,
+            originalWindowOpen: null,
             videoFitMode: "smart",
             sessionActivityAt: Date.now(),
             sessionWatchTimer: null,
@@ -2580,6 +2586,7 @@
 
         function isInjectedOverlayFrame(frame) {
             if (!frame || frame === els.embedFrame) return false;
+            if (els.videoShell.classList.contains("is-embed")) return true;
 
             const src = (frame.getAttribute("src") || "").trim().toLowerCase();
             const scrolling = (frame.getAttribute("scrolling") || "").trim().toLowerCase();
@@ -2596,6 +2603,12 @@
             }
 
             return false;
+        }
+
+        function removeInjectedFrame(frame) {
+            if (!frame || frame === els.embedFrame) return;
+            pruneOverlayContainer(frame);
+            frame.remove();
         }
 
         function pruneOverlayContainer(element) {
@@ -2626,33 +2639,73 @@
         function purgeUnexpectedEmbeds() {
             if (!els.videoShell.classList.contains("is-embed")) return;
 
-            const strayFrames = Array.from(document.body.querySelectorAll("iframe"))
+            const strayFrames = Array.from(document.documentElement.querySelectorAll("iframe"))
                 .filter((frame) => frame !== els.embedFrame && isInjectedOverlayFrame(frame));
 
-            strayFrames.forEach((frame) => {
-                pruneOverlayContainer(frame);
-                frame.remove();
-            });
+            strayFrames.forEach(removeInjectedFrame);
+        }
+
+        function blockEmbedDocumentNavigation(event) {
+            if (!els.videoShell.classList.contains("is-embed")) return;
+            const target = event.target?.closest?.("a[href], area[href], form[action]");
+            if (!target || target.closest?.(".library-panel, .topbar, .admin-panel, .auth-modal, .settings-modal")) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            purgeUnexpectedEmbeds();
         }
 
         function startEmbedGuard() {
             stopEmbedGuard();
+            document.body.classList.add("embed-guard-active");
             purgeUnexpectedEmbeds();
 
-            state.embedGuardObserver = new MutationObserver(() => {
-                purgeUnexpectedEmbeds();
+            if (!state.originalWindowOpen) {
+                state.originalWindowOpen = window.open;
+                window.open = function guardedWindowOpen(...args) {
+                    if (els.videoShell.classList.contains("is-embed")) {
+                        purgeUnexpectedEmbeds();
+                        return null;
+                    }
+                    return state.originalWindowOpen.apply(window, args);
+                };
+            }
+
+            document.addEventListener("click", blockEmbedDocumentNavigation, true);
+            document.addEventListener("auxclick", blockEmbedDocumentNavigation, true);
+            document.addEventListener("submit", blockEmbedDocumentNavigation, true);
+
+            state.embedGuardObserver = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                    mutation.addedNodes.forEach((node) => {
+                        if (node.nodeType !== Node.ELEMENT_NODE) return;
+                        if (node.matches?.("iframe") && node !== els.embedFrame) {
+                            removeInjectedFrame(node);
+                            return;
+                        }
+                        node.querySelectorAll?.("iframe").forEach((frame) => {
+                            if (frame !== els.embedFrame) removeInjectedFrame(frame);
+                        });
+                    });
+                }
+                window.requestAnimationFrame(purgeUnexpectedEmbeds);
             });
-            state.embedGuardObserver.observe(document.body, {
+            state.embedGuardObserver.observe(document.documentElement, {
                 childList: true,
-                subtree: true
+                subtree: true,
+                attributes: true,
+                attributeFilter: ["style", "src", "scrolling", "class"]
             });
 
             state.embedGuardInterval = window.setInterval(() => {
                 purgeUnexpectedEmbeds();
-            }, 700);
+            }, 120);
         }
 
         function stopEmbedGuard() {
+            document.body.classList.remove("embed-guard-active");
             if (state.embedGuardObserver) {
                 state.embedGuardObserver.disconnect();
                 state.embedGuardObserver = null;
@@ -2661,6 +2714,13 @@
                 window.clearInterval(state.embedGuardInterval);
                 state.embedGuardInterval = null;
             }
+            if (state.originalWindowOpen) {
+                window.open = state.originalWindowOpen;
+                state.originalWindowOpen = null;
+            }
+            document.removeEventListener("click", blockEmbedDocumentNavigation, true);
+            document.removeEventListener("auxclick", blockEmbedDocumentNavigation, true);
+            document.removeEventListener("submit", blockEmbedDocumentNavigation, true);
         }
 
         function setPlayerMode(mode) {
